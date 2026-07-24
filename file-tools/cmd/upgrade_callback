@@ -1,0 +1,6 @@
+#!/bin/bash
+# cmd/upgrade_callback — 升级后回调
+
+PERSIST_LOG="${TRIM_PKGVAR}/install.log"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] upgrade_callback 完成" >> "$PERSIST_LOG"
+exit 0

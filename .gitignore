@@ -1,0 +1,7 @@
+node_modules/
+__pycache__/
+*.fpk
+.DS_Store
+*.pyc
+fnpack
+fnnas-docs/

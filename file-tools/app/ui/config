@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "file-tools.main": {
+      "title": "文件工具箱",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/file-tools",
+      "gatewaySocket": "app.sock",
+      "url": "/app/file-tools",
+      "allUsers": true
+    }
+  }
+}

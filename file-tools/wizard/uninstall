@@ -1,0 +1,24 @@
+[
+  {
+    "stepTitle": "确认卸载",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "您即将卸载<b>文件工具箱</b>。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_clean_data",
+        "label": "是否同时删除 appshare 中的校验结果文件？",
+        "initValue": "no",
+        "options": [
+          { "label": "保留结果文件，仅卸载应用", "value": "no" },
+          { "label": "删除所有数据（包括结果文件），此操作不可恢复", "value": "yes" }
+        ],
+        "rules": [
+          { "required": true, "message": "请选择是否删除结果文件" }
+        ]
+      }
+    ]
+  }
+]

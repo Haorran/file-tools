@@ -1,0 +1,15 @@
+#!/bin/bash
+# cmd/install_callback — 安装后回调
+
+# 持久化日志（安装失败也不会被清理）
+PERSIST_LOG="${TRIM_PKGVAR}/install.log"
+mkdir -p "${TRIM_PKGVAR}"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] install_callback 开始" >> "$PERSIST_LOG"
+echo "TRIM_APPDEST=$TRIM_APPDEST" >> "$PERSIST_LOG"
+echo "TRIM_PKGVAR=$TRIM_PKGVAR" >> "$PERSIST_LOG"
+
+# 纯静态应用，无需额外依赖安装
+# shell 脚本已内嵌在包中，无需 npm
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] install_callback 完成" >> "$PERSIST_LOG"
+exit 0

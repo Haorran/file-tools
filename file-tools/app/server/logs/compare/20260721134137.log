@@ -1,0 +1,13 @@
+{
+  "id": "21558cc9-1100-43c5-b773-5324f5ed65e3",
+  "tool": "compare",
+  "args": {
+    "mode": 0,
+    "dirA": "/tmp/test-dir-a",
+    "dirB": "/tmp/test-dir-b",
+    "blockSize": null
+  },
+  "timestamp": "2026-07-21T13:41:37.232030",
+  "exitCode": 99,
+  "lines": []
+}

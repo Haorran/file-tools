@@ -1,0 +1,13 @@
+{
+  "id": "82e0f3eb-d78b-4624-a354-e84fc96ba6a1",
+  "tool": "duplicate",
+  "args": {
+    "mode": 1,
+    "scanDir": "/Users/admin/Downloads",
+    "filterKB": null,
+    "blockSize": 65536
+  },
+  "timestamp": "2026-07-21T13:41:03.285133",
+  "exitCode": -9,
+  "lines": []
+}

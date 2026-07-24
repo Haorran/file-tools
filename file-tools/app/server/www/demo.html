@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>下拉方案对比</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: Inter, system-ui, sans-serif; padding: 40px; background: #f1f5f9; min-height: 100vh; }
+h1 { font-size: 24px; margin-bottom: 4px; color: #1e293b; }
+h2 { font-size: 16px; color: #334155; margin-bottom: 8px; }
+.subtitle { font-size: 13px; color: #94a3b8; margin-bottom: 24px; }
+.section { margin-bottom: 48px; }
+.desc { font-size: 12px; color: #94a3b8; margin-bottom: 12px; }
+.row { display: flex; gap: 12px; align-items: flex-start; }
+
+.dropdown { position: relative; display: inline-block; }
+.dropdown-btn { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; font-size: 14px; color: #334155; cursor: pointer; transition: border-color 0.2s; white-space: nowrap; }
+.dropdown-btn:hover { border-color: #60a5fa; }
+.dropdown-btn .arrow { font-size: 10px; color: #94a3b8; transition: transform 0.2s; }
+.menu { position: absolute; top: 100%; left: 0; margin-top: 4px; min-width: 140px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.1); z-index: 20; padding: 4px; display: none; }
+.menu.show { display: block; }
+.menu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 12px; border: none; background: none; font-size: 14px; color: #334155; cursor: pointer; border-radius: 6px; text-align: left; transition: background 0.15s; }
+.menu-item:hover { background: #f1f5f9; }
+.menu-item.active { color: #2563eb; font-weight: 600; background: #eff6ff; }
+.menu-item .check { color: #2563eb; font-weight: 700; }
+
+.dropdown-hover .menu { display: none; }
+.dropdown-hover:hover .menu { display: block; animation: fadeIn 0.15s ease-out; }
+
+.dropdown-up .menu { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 4px; }
+
+.pill-btn { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 9999px; border: 1px solid #cbd5e1; background: #fff; font-size: 14px; font-weight: 500; color: #64748b; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+.pill-btn:hover { border-color: #94a3b8; }
+.pill-btn.active { border-color: #60a5fa; color: #2563eb; background: #eff6ff; }
+.pill-btn .dot { width: 6px; height: 6px; border-radius: 50%; background: #2563eb; display: none; }
+.pill-btn.active .dot { display: block; }
+
+.underline-tab { position: relative; padding: 8px 14px; font-size: 14px; font-weight: 500; color: #64748b; background: none; border: none; cursor: pointer; transition: color 0.2s; }
+.underline-tab:hover { color: #334155; }
+.underline-tab.active { color: #2563eb; }
+.underline-tab.active::after { content: ''; position: absolute; bottom: -1px; left: 50%; transform: translateX(-50%); width: 70%; height: 2px; background: #2563eb; border-radius: 2px; }
+.divider { width: 1px; height: 20px; background: #e2e8f0; align-self: center; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+</style>
+</head>
+<body>
+<h1>下拉框方案对比</h1>
+<p class="subtitle">4 种方案均可点击交互</p>
+
+<div class="section">
+  <h2>方案1 · Hover 展开菜单</h2>
+  <p class="desc">鼠标悬停展开，移走收回。最轻量。</p>
+  <div class="row">
+    <div class="dropdown dropdown-hover">
+      <button class="dropdown-btn" id="btn1a">全部类型 <span class="arrow">▾</span></button>
+      <div class="menu">
+        <button class="menu-item active" data-btn="btn1a">全部类型 <span class="check">✓</span></button>
+        <button class="menu-item" data-btn="btn1a">目录比较</button>
+        <button class="menu-item" data-btn="btn1a">目录内查重</button>
+      </div>
+    </div>
+    <div class="dropdown dropdown-hover">
+      <button class="dropdown-btn" id="btn1b">运行中 <span class="arrow">▾</span></button>
+      <div class="menu">
+        <button class="menu-item active" data-btn="btn1b">运行中 <span class="check">✓</span></button>
+        <button class="menu-item" data-btn="btn1b">已结束</button>
+        <button class="menu-item" data-btn="btn1b">已终止</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>方案2 · 点击展开 + 对勾</h2>
+  <p class="desc">点击展开，选中项前有 ✓，点击外部关闭。</p>
+  <div class="row">
+    <div class="dropdown" id="dd2a">
+      <button class="dropdown-btn" id="btn2a">全部类型 <span class="arrow">▾</span></button>
+      <div class="menu">
+        <button class="menu-item active" data-btn="btn2a">全部类型 <span class="check">✓</span></button>
+        <button class="menu-item" data-btn="btn2a">目录比较</button>
+        <button class="menu-item" data-btn="btn2a">目录内查重</button>
+      </div>
+    </div>
+    <div class="dropdown" id="dd2b">
+      <button class="dropdown-btn" id="btn2b">运行中 <span class="arrow">▾</span></button>
+      <div class="menu">
+        <button class="menu-item active" data-btn="btn2b">运行中 <span class="check">✓</span></button>
+        <button class="menu-item" data-btn="btn2b">已结束</button>
+        <button class="menu-item" data-btn="btn2b">已终止</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>方案3 · 胶囊圆点 + 上弹出</h2>
+  <p class="desc">圆角胶囊，激活显示圆点，菜单向上弹出。</p>
+  <div class="row">
+    <div class="dropdown dropdown-up" id="dd3a">
+      <button class="pill-btn" id="btn3a"><span class="dot"></span>全部类型 <span style="font-size:10px;color:#94a3b8">▾</span></button>
+      <div class="menu">
+        <button class="menu-item active" data-btn="btn3a">全部类型</button>
+        <button class="menu-item" data-btn="btn3a">目录比较</button>
+        <button class="menu-item" data-btn="btn3a">目录内查重</button>
+      </div>
+    </div>
+    <div class="dropdown dropdown-up" id="dd3b">
+      <button class="pill-btn" id="btn3b"><span class="dot"></span>运行中 <span style="font-size:10px;color:#94a3b8">▾</span></button>
+      <div class="menu">
+        <button class="menu-item active" data-btn="btn3b">运行中</button>
+        <button class="menu-item" data-btn="btn3b">已结束</button>
+        <button class="menu-item" data-btn="btn3b">已终止</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>方案4 · 下划线标签</h2>
+  <p class="desc">全部平铺，点击切换，蓝色下划线指示选中。</p>
+  <div class="row" id="tabs4">
+    <button class="underline-tab active" data-group="tool">全部类型</button>
+    <button class="underline-tab" data-group="tool">目录比较</button>
+    <button class="underline-tab" data-group="tool">目录内查重</button>
+    <span class="divider"></span>
+    <button class="underline-tab active" data-group="status">运行中</button>
+    <button class="underline-tab" data-group="status">已结束</button>
+    <button class="underline-tab" data-group="status">已终止</button>
+  </div>
+</div>
+
+<script>
+// Hover dropdowns — update button text
+document.querySelectorAll('.dropdown-hover .menu-item').forEach(item => {
+  item.addEventListener('click', function(e) {
+    const menu = this.parentElement;
+    menu.querySelectorAll('.menu-item').forEach(mi => mi.classList.remove('active'));
+    this.classList.add('active');
+    const btn = document.getElementById(this.dataset.btn);
+    btn.childNodes[0].textContent = this.textContent.replace('✓','').trim();
+    e.stopPropagation();
+  });
+});
+
+// Click dropdowns — toggle menu
+document.querySelectorAll('#dd2a, #dd2b, #dd3a, #dd3b').forEach(dd => {
+  dd.querySelector('.dropdown-btn, .pill-btn').addEventListener('click', function(e) {
+    const menu = dd.querySelector('.menu');
+    menu.classList.toggle('show');
+    e.stopPropagation();
+  });
+  dd.querySelectorAll('.menu-item').forEach(item => {
+    item.addEventListener('click', function(e) {
+      const btn = document.getElementById(this.dataset.btn);
+      const menu = this.parentElement;
+      menu.querySelectorAll('.menu-item').forEach(mi => mi.classList.remove('active'));
+      this.classList.add('active');
+      // Update button text
+      btn.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = this.textContent; });
+      menu.classList.remove('show');
+      // Update dot + active class for pill buttons
+      if (btn.classList.contains('pill-btn')) {
+        const label = this.textContent;
+        const isDefault = (btn.id === 'btn3a' && label === '全部类型') || (btn.id === 'btn3b' && label === '运行中');
+        if (isDefault) btn.classList.remove('active');
+        else btn.classList.add('active');
+      }
+      e.stopPropagation();
+    });
+  });
+});
+
+// Underline tabs
+document.querySelectorAll('.underline-tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll(`.underline-tab[data-group="${this.dataset.group}"]`).forEach(t => t.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+// Click outside closes all click-dropdowns
+document.addEventListener('click', () => {
+  document.querySelectorAll('.menu.show').forEach(m => m.classList.remove('show'));
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+appname        = file-tools
+version        = 0.0.57
+display_name   = 文件工具箱
+desc           = <b>文件工具箱</b>专为 NAS 用户打造，解决文件管理中的高频痛点：备份完到底全不全？磁盘里藏着多少重复文件？<br><br>📁 <b>目录比较</b>— 比对两个目录之间的文件清单差异与内容一致性，验证备份/同步是否完整，输出差异报告与容量汇总。<br>🔍 <b>目录内查重</b>— 扫描单个目录，按文件名或内容哈希分组，找出重复文件并统计冗余占用，释放存储空间。<br><br><b>三种校验模式：</b><br>⚡ 极速 — 仅比对文件名+大小，秒级完成<br>✅ 推荐 — 大小+首位局部哈希（支持 64KB/256KB/1MB 块大小），兼顾速度与准确率<br>🔒 完整 — 大小+首位局部哈希+全文件 SHA256，适合需要绝对确认一致性的场景<br><br><b>适用场景：</b><br>• 影视资源备份校验 — 确认备份盘与源盘文件完全一致<br>• 数据迁移完整性验证 — 换盘/迁移后快速核对<br>• 磁盘空间清理 — 扫描重复文件，释放冗余存储<br>• 同步工具结果验证 — 校验 rsync、Syncthing 等工具的同步结果<br><br><b>功能特性：</b><br>• 结果导出 — 校验结果可导出为 TXT 文件，保存到应用共享目录<br>• 文件过滤 — 目录内查重支持按文件大小过滤，跳过小文件<br>• 实时进度 — SSE 实时推送校验进度与详细日志<br>• 明暗主题 — 自动跟随 NAS 系统主题设置
+source         = thirdparty
+platform       = all
+maintainer     = 灏然
+maintainer_url = https://s26.fnnas.net/s/01e4988bc5b4460d94
+distributor    = 灏然
+distributor_url = https://s26.fnnas.net/s/01e4988bc5b4460d94
+desktop_uidir          = ui
+desktop_applaunchname  = file-tools.main
+
+os_min_version         = 1.1.3100
+ctl_stop               = true
+checkport              = false
+disable_authorization_path = false

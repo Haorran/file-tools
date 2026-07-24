@@ -1,0 +1,18 @@
+#!/bin/bash
+# cmd/upgrade_init — 升级前回调
+# 停止当前运行的服务
+
+SOCKET_PATH="${TRIM_APPDEST}/app.sock"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+
+if [ -f "$PID_FILE" ]; then
+  pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 2
+  fi
+  rm -f "$PID_FILE"
+  rm -f "$SOCKET_PATH"
+fi
+
+exit 0

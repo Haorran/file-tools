@@ -1,0 +1,10 @@
+#!/bin/bash
+# cmd/install_init — 安装前初始化
+
+PERSIST_LOG="${TRIM_PKGVAR}/install.log"
+mkdir -p "${TRIM_PKGVAR}"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] install_init 开始" >> "$PERSIST_LOG"
+
+# 纯静态应用，无需额外运行时检查
+
+exit 0

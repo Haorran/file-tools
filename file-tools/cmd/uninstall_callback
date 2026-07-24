@@ -1,0 +1,47 @@
+#!/bin/bash
+# cmd/uninstall_callback — 卸载后回调
+# 根据卸载向导选择，清理残留目录
+
+# wizard_clean_data: "yes" = 删除全部数据包括 appshare，"no" = 仅删除应用目录保留 appshare
+if [ "$wizard_clean_data" = "yes" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 用户选择删除全部数据" >> "${TRIM_TEMP_LOGFILE:-/dev/null}" 2>/dev/null
+  # 删除 @appshare 中的结果文件
+  if [ -n "${TRIM_DATA_SHARE_PATHS}" ]; then
+    IFS=':'
+    for share_path in ${TRIM_DATA_SHARE_PATHS}; do
+      if [ -d "$share_path" ]; then
+        rm -rf "$share_path" 2>/dev/null
+      fi
+    done
+    unset IFS
+  fi
+  # 删除 @appdata
+  rm -rf "${TRIM_PKGVAR}" 2>/dev/null
+  # 删除 @apphome
+  APP_HOME="$(dirname "${TRIM_PKGVAR}")/../@apphome/${TRIM_APPNAME}"
+  rm -rf "${APP_HOME}" 2>/dev/null
+  # 删除 @appconf
+  rm -rf "${TRIM_PKGETC}" 2>/dev/null
+  # 删除 @appmeta
+  APP_META="$(dirname "${TRIM_PKGVAR}")/../@appmeta/${TRIM_APPNAME}"
+  rm -rf "${APP_META}" 2>/dev/null
+  # 删除 @appcenter
+  rm -rf "${TRIM_APPDEST}" 2>/dev/null
+else
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 用户选择保留结果文件，仅清理应用目录" >> "${TRIM_TEMP_LOGFILE:-/dev/null}" 2>/dev/null
+  # 保留 appshare，删除其他所有
+  # 删除 @appdata
+  rm -rf "${TRIM_PKGVAR}" 2>/dev/null
+  # 删除 @apphome
+  APP_HOME="$(dirname "${TRIM_PKGVAR}")/../@apphome/${TRIM_APPNAME}"
+  rm -rf "${APP_HOME}" 2>/dev/null
+  # 删除 @appconf
+  rm -rf "${TRIM_PKGETC}" 2>/dev/null
+  # 删除 @appmeta
+  APP_META="$(dirname "${TRIM_PKGVAR}")/../@appmeta/${TRIM_APPNAME}"
+  rm -rf "${APP_META}" 2>/dev/null
+  # 删除 @appcenter
+  rm -rf "${TRIM_APPDEST}" 2>/dev/null
+fi
+
+exit 0

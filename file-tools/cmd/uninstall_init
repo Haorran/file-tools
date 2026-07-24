@@ -1,0 +1,27 @@
+#!/bin/bash
+# cmd/uninstall_init — 卸载前回调
+# 停止服务并清理 socket
+
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+SOCKET_PATH="${TRIM_APPDEST}/app.sock"
+
+if [ -f "$PID_FILE" ]; then
+  pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    # 等待进程退出，最多等待 10 秒
+    local count=0
+    while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 10 ]; do
+      sleep 1
+      count=$((count + 1))
+    done
+    # 仍未退出则强制杀死
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$PID_FILE"
+fi
+
+rm -f "$SOCKET_PATH"
+exit 0
