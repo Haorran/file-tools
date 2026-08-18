@@ -1,5 +1,180 @@
 # CHANGELOG
 
+## [0.1.52] - 2026-08-17
+
+### 新增
+- **兼容无开放 API 的旧系统（退步兼容）**：开放 API 要求 fnOS ≥ 1.2.0401，旧系统（统一网关起，1.1.3100）不注入 `TRIM_API_TOKEN`、无网关 socket。现在应用按**运行时能力探测**（`trimapi.is_openapi_available()`：token 主信号 + socket 确认，现读不缓存）自动区分两模式，同一 fpk 通吃：
+  - **严格模式**（开放 API 可用，行为不变）：任务创建前校验目录在授权范围内，trimapi 失败即暴露、不回退 `os.access`
+  - **legacy 模式**（拿不到 apitoken）：`_check_auth_scope` 跳过授权范围校验，靠「系统设置 → 应用 → 文件工具箱 → 授权目录」手动授权 + `os.access`（OS 层 ACL 门禁）；`/api/auth/folders` 返回 `{paths:[], legacy:true}`、`/api/path/convert` 返回恒等映射（前端显示原始路径）、DELETE auth folders 引导去系统设置
+  - `os_min_version` 从 `1.2.0401` 降回 `1.1.3100`（统一网关最低要求）。`manifest`、`trimapi.py`、`router.py`；前端 `trimSdk.js`（导出 `sdkAvailable`）、`Settings.vue`（legacy 下隐藏授权目录列表、改引导系统设置）、`wizard/install`、`wizard/config`（双模式文案）
+  - +单测 `tests/test_openapicap.py`（探测三分支）、`tests/test_validate_dir.py`（legacy 跳过 scope + os.access 通过/拒绝 + 非法路径保留）、`tests/test_router_auth.py`（legacy 三路由降级）；`tests/conftest.py` 增 `openapi_mode`/`legacy_mode` fixture（既有严格模式用例沿用 `openapi_mode`）
+  - 设计文档：`BACKWARD_COMPAT_SDD.md`（新增）；`OPENAPI_SDD.md` 头部附录声明覆盖 T2-a（os_min_version 上调决策）
+
+
+### 改进
+- **历史任务结果迁到应用私有数据目录**：compare/duplicate 的历史任务结果从 data-share 共享目录（appshare，用户文件管理器可见）迁到应用私有数据目录 `$TRIM_PKGVAR/results/`（@appdata）——用户不再在共享目录看到结果文件，需要时经「导出/下载」取出。**旧 appshare 结果不迁移**，升级后旧历史不显示（重新扫描即可）。`logstore.py`
+- **卸载「保留数据」语义调整**：卸载向导改为「是否保留应用数据（历史任务结果与导出文件）」——选「保留」时保留 @appdata（历史任务结果 + 文件索引）+ @appshare（导出文件），删除其余（@apphome/@appconf/@appmeta/@appcenter）；选「删除所有数据」时全部清理。`cmd/uninstall_callback`、`wizard/uninstall`
+- **文件索引搜索结果「复制路径」改为「在文件管理器中打开」**：结果行原来只能复制完整路径到剪贴板，现与单目录查重结果一致——通过 fnOS 前端 SDK `openFileManager` 直接打开系统文件管理器并定位到该文件所在目录（传父目录，打开即可见该文件）；宿主外（SDK 不可用/独立浏览器）静默降级。`FileIndex.vue`（`useTrimSdk` + `openInFileManager`，删 `copyPath`）
+- **「系统不支持选目录授权」提示改为可关闭 Toast**：legacy 系统下原在每个「选择目录」输入框下方挂整段说明（Compare 目录A/B 重复两遍、常驻占中间栏）。改为全局右上角 toast——**打开工具弹一次（同会话 sessionStorage 记，不重复）**，点置灰的「选择目录」也再弹（每次），可点 × 关闭、约 6s 自动消失；选择器打开失败（pickError）也走同一 toast。新增 `useToast.js` + `ToastHost.vue`（挂 `App.vue`），`DirPicker.vue` 删内联提示、按钮改「置灰样式 + 点击拦截」（不用原生 `disabled`，否则点不到弹不了）；设置页「授权目录」区域引导文案保留。
+- **应用介绍补「文件索引」**：manifest `desc` 与安装向导文案此前漏了 0.1.46 引入的文件索引工具，补上「📇 文件索引 — 为目录建立持久化索引，按文件名、扩展名、大小、修改时间快速搜索」；README 环境要求系统版本下限同步 `os_min_version`（`1.2.0401`→`1.1.3100`）并补旧系统降级说明
+
+### 修复
+- **legacy 下 SDK 相关按钮置灰 + 引导**：旧系统（无宿主 bridge）下，「选择目录」按钮此前直接隐藏、查重结果与文件索引的「在文件管理器中打开」按钮点了静默无反应——改为按钮**置灰禁用**并提示原因/替代路径：「选择目录」旁提示「系统不支持应用内选目录授权，请在系统设置 → 应用 → 文件工具箱 → 授权目录 手动添加」；「在文件管理器中打开」悬停提示「系统不支持打开文件管理器」。用 `sdkResolved` 区分「SDK 初始化中」与「确认 legacy」，避免开放 API 系统初始化瞬间闪现提示。`DirPicker.vue`、`DuplicateResult.vue`、`FileIndex.vue`
+- **前端能力判定改由后端权威信号驱动**：修复旧系统（如 fnOS 1.2.0203）按钮「亮起但不可点」——此前用 `sdk.isWeb && !sdk.isStandaloneWeb` 判宿主可用，但旧系统在 web 宿主 iframe 里 `isWeb=true` 而开放 API bridge 根本没注入，误判为可用（按钮亮、点击静默失败）。现改为 `detectSdkAvailable()` = **后端 `/api/capability` 信号（token+socket，权威）+ 宿主 bridge 实探（`getPlatformConfig` 成功）**，响应式 `useSdkAvailable()` 供按钮 `:disabled` 绑定；后端新增 `GET /api/capability → {openapi}`。`trimSdk.js`、`router.py`。+单测 `tests/test_router_auth.py`（capability 严格/legacy 两态）
+- **卸载向导「删除所有数据」红色加粗警示**：卸载时「删除所有数据」选项文字改为红色加粗（`<b style="color:#ef4444">`），并新增红色加粗 tips 警告「⚠️ 选择「删除所有数据」将永久删除历史任务结果与导出文件，此操作不可恢复！」——helpText 的 HTML 渲染是已验证路径，保证警示必显示（即使 radio label 不支持 HTML 也有 tips 兜底）。`wizard/uninstall`
+- **「选择目录」按钮「不置灰但点不动」修复**：0.1.52 改动后按钮仍不置灰、点击却无反应。两个根因叠加：① `DirPicker.vue` 漏导 `sdkReady`（0.1.51 还打包着，0.1.52 变裸全局引用）→ `pickDir` 里 `await sdkReady()` 抛 `ReferenceError` 被静默 catch → 点击永远无反应；② 能力探测 bridge 实探用 `getPlatformConfig()`，但 extension-host 连接下它本地解析即成功（假阳性）而 `pickSharedFile`/`openFileManager` 实际抛 `NotSupportedInExtensionHost` → 探测过、点不动。修复：补 `sdkReady` 导入；探测改为调 `setTitle`（与文件类 SDK 方法同可用性，native-OS 宿主可用、extension-host 抛错）正确区分；`pickDir` 失败不再静默、显示替代路径提示兜底。`trimSdk.js`、`DirPicker.vue`
+- **卸载向导 radio 选项 HTML 原文显示修复**：「删除所有数据」radio 选项 label 里的 `<b style="color:#ef4444">` 标签在卸载向导原文显示（radio 选项 label 不支持 HTML）——改为纯文本，红色加粗警示保留在 tips `helpText`（HTML 渲染已验证路径）。`wizard/uninstall`
+- **任务完成瞬间丢勾选修复**：查重结果里勾选文件时任务恰好完成（live→history 过渡），`selectedResult` 在历史结果异步载入窗口短暂置空 → DuplicateResult 卸载重挂 → 已勾选清零、移入暂存区按钮禁用——改为历史结果载入窗口桥接 taskMap 终态结果，保持组件挂载、勾选不丢。`App.vue`（`selectedResult`）。+E2E 回归（21 例全绿，含新增的查重三模式/比较完整/终止任务/暂存区永久删除/索引删除重建）
+
+## [0.1.50] - 2026-08-17
+
+### 新增
+- **文件索引「读取错误详情」可展开**：索引卡片「N 个读取错误（权限/损坏）」角标改为可点击，展开显示**具体失败目录/文件的完整错误**（含路径与原因，等宽小字、超多可滚动），提示「修复权限后重建索引可收录」——此前只显示数字、无法得知哪些路径被跳过。`FileIndex.vue`（`expandedErr` 状态 + 卡片改两段式布局）。+E2E 1 例（fixture 建含 `chmod 000` 子目录的目录：可读文件照常入库 + 错误角标展开可见 `locked` 路径，`scripts/test-e2e.sh` 加 fixture）
+
+### 改进
+- **检查更新失败双落记录**：GitHub 不可达/检查失败不再只显示红字——前端 `checkForUpdates` 把 error 写入**浏览器 localStorage 崩溃日志**（设置页「应用崩溃日志」可见，持久化上限 200 条）；后端 `_handle_update_check` 同时记 app.log。`Settings.vue`、`router.py`。+单测 `tests/test_router_update_log.py`（失败记 ERROR / 成功不记）
+- **后端关键失败记 app.log（服务端持久化）**：三类此前静默/仅 UI 可见的失败接入 `TRIM_PKGVAR/app.log`（经 logging → cmd/main stderr 重定向）：
+  - **trimapi 开放 API 失败**：`trimapi.call()` 源头包装日志，任何 `TrimApiError`（网关 socket 连不上 / token / scope / 非 JSON）先记 app.log 再照常抛出——覆盖查/删授权目录、路径转换、授权范围校验（建任务必经）全部调用方。`trimapi.py`（拆 `call` 日志包装 + `_call_impl`）
+  - **任务运行异常 + 落盘失败**：`runner._finish` 任务崩溃（err 传入）记 app.log；`logstore.save_run` 落盘失败原 `except: pass` 静默吞改记 app.log（磁盘满/权限时「任务结束即消失」可查根因）。`runner.py`
+  - **索引构建失败**：daemon 构建异常记 app.log。`indexbuild.py`
+  - +单测 `tests/test_trimapi.py`（TrimApiError 记日志且照常抛）、`tests/test_runner_finish.py`（任务失败/落盘失败记日志）
+
+## [0.1.49] - 2026-08-17
+
+### 新增
+- **建任务「暂存区残留闸门」处理进度**：目录有未清理暂存区时，点「恢复全部并扫描」弹**流式逐文件恢复进度条**（复用 `/api/trash/restore-stream`：先 `rebuild` 兜底补录清单、再全量逐文件恢复、恢复完自动开始扫描）；「永久删除并扫描」是 rmtree 整区一次删（快），弹 spinner。此前这两步是单次阻塞 POST，期间界面无任何进度反馈。`useTaskCreate.js`（`restoreGate`/`purgeGate` 状态 + `resolveTrashGate` 改流式恢复 + 完成后仍带 `trashAction='restore'` 提交，后端 `restore_all` 兜底失败条目并保证任务照常开始）、`App.vue`（两个处理中弹窗）
+
+### 改进
+- **移入/恢复进行中禁止删除任务**（防丢文件）：删任务收尾会 `purge_trash` 清掉 `.ft-trash`，若在移入/恢复期间执行，会把正在写入/读取的暂存区整个清掉（已移入文件丢失）。前端 `TaskList` 删除按钮在 `activeOp` 命中该目录（`kind` 为 move/restore 且 `scanDir` 相同）时禁用并灰显 + `handleDelete` 防御 guard；后端 `_handle_delete_log` 加 `_ops_find` 防线（该目录有运行中 op → 409「正在移入/恢复中，请稍后再删除任务」），兜底前端被绕过的场景。`TaskList.vue`、`App.vue`、`router.py`。+单测 `tests/test_router_delete_opguard.py`（2 例：同目录有 op 拒删且 run 记录保留 / op 在别的目录不影响本目录删除）
+- **恢复全部进行中禁用单文件恢复**：单文件「恢复」按钮此前只在移入进行中（`moveRunning`）禁用，恢复全部进行中仍可点——会与恢复循环并发写 `trash.db`（撞锁 / 已恢复文件再点报「清单缺失」）。修复：按钮禁用条件 + `doRestore` guard 补 `restoringAll || restoreOp.running`（本会话 + 后台恢复进行中），与 0.1.47 移入处理对齐。`StagingDrawer.vue`
+
+### 修复
+- **日志面板「正在移入/正在恢复」进度要切换界面才显示**：根因 = `useOps` 是「发现型」连接，只在 `watch(trashScanDir)` / `watch(stagingDrawer)`（切换任务/视图、开抽屉）时 `getOpsStatus` 轮询一次、发现有运行中的 op 才连上；本会话实时移入/恢复流发起时不会立即填充 `activeOp`，一切换视图才显示。修复：实时流首帧 `start` 事件带 `opId`（`router.py` 早已下发 `{total, opId}`）→ 组件读到后 `signalLiveOp` 写入模块级信号 → App `useOps.connectById` 立即按 opId 连上该 op，进度即时进日志面板（本会话与关窗重开后台 op 共用同一 `activeOp`，两路径归一）。`useOps.js`（重构 `openEs` + 新增 `connectById` + `liveOpSignal`/`signalLiveOp`）、`App.vue`（watch 信号即连）、`DuplicateResult.vue`（移入）/`StagingDrawer.vue`（恢复全部）/`TaskList.vue`（删除前恢复）各自流读到 `start` 即信号
+
+## [0.1.48] - 2026-08-17
+
+### 新增
+- **查重建任务「暂存区残留闸门」**：目录有未清理的暂存区（典型：卸载前未走「删除任务→清理暂存区」流程，卸载后 `.ft-trash/` 与 `trash.db` 随用户目录保留）时，walker 扫描会排除 `.ft-trash`，直接建任务会遗漏这些文件 → 结果不完整。现在建任务检测到残留即挂起创建，弹「恢复全部并扫描 / 永久删除并扫描」二选一：恢复 = `rebuild` 兜底补录清单（覆盖 DB 缺失场景）+ `restore_all` 移回原位再扫描；删除 = `purge_trash` 后再扫描。闸门只命中孤儿暂存区——`_dir_has_task` 已保证建新任务前该目录无存活任务记录，而正常删任务又强制先清暂存区，故「有暂存区无任务记录」只可能是卸载残留。`engine/trash.py`（`recoverable_count`：DB 有条目按 DB 数、DB 缺失按 `.ft-trash` 实际文件数）、`router.py`（`_handle_duplicate` 409 `{trashRecoveryRequired, trashCount}`，`trashAction` 仅允许 restore/purge）、`frontend/src/api.js`（`startDuplicate` 支持 `trashAction` + 识别 409）、`useTaskCreate.js`（`trashGate` + `resolveTrashGate`）、`App.vue`（ConfirmDialog 二选一挂载）。+单测 `tests/test_router_gate.py`（6 例：正常创建 / 无 action 挂起 / restore / purge / DB 缺失 restore / 非法 action）、`tests/test_trash.py`（+3 例 `recoverable_count`）、E2E 2 例（`/tmp/ft-test/gate` 孤儿暂存区 → 恢复后扫出重复组 / 删除后无重复）
+
+### 改进
+- **打包卫生：源码与本地测试物理分离**（fpk 载荷纯净化，root cause = fnpack 哑打包器无排除机制、凡 `app/` 内一律进包）。诊断发现 0.1.47 的 `app.tgz` 打进了 4 类本地/开发产物：`server/tests/`（19 个 pytest 文件）、`server/logs/`（本地运行残留）、`server/pytest.ini`、`server/www/demo.html`（「下拉方案对比」开发演示页）。
+  - `tests/` + `pytest.ini` 移出 `app/` → `file-tools/` 顶层（与 `app/` 平级，天然不入包）；`tests/conftest.py` sys.path 同步定位 `app/server`（dirname 两次后拼 `app/server`）。
+  - 3 处本地裸跑写回退重定向到 `file-tools/.localdata/`（`app/` 之外，不入包）：`logstore.py`（logs）、`indexstore.py`（index）、`router.py`（DEBUG_LOCAL 导出 export）。部署走 `TRIM_DATA_SHARE_PATHS`/`TRIM_APPDEST`，行为不变。
+  - `server.py` mock 假网关路径修正：`SCRIPT_DIR/tests/mock_gateway.py` → `dirname(dirname(SCRIPT_DIR))/tests/mock_gateway.py`（`--port` 本地 debug 模式 / e2e 必需）。
+  - 移除 `frontend/public/demo.html`（无应用引用，构建后 `www/` 不再生成）；删除 `app/server/logs/` 旧残留。
+  - `Makefile` build 追加 `rm -rf app/server/logs app/server/index app/server/export` 保险；`.gitignore` 加 `.localdata/`。
+  - 验证：pytest 新命令 `cd file-tools && ../.venv/bin/python -m pytest -q` 全绿、`npm run build` 后 `www/` 无 demo.html、`make test-e2e` 13 passed（mock 假网关拉起）、解包确认 `app.tgz` 无 tests/logs/pytest.ini/demo.html/`__pycache__`。
+
+## [0.1.47] - 2026-08-17
+
+### 改进
+- **移入/恢复进度条搬进日志面板**：从右侧面板顶部挪到日志面板内容区顶部（「正在处理」上方），进度展示与任务处理统一位置；`activeOp` 透传 `LogPanel`（本会话/关窗重开后台 op 共用）。`App.vue`（删顶部横幅 + 传参）、`LogPanel.vue`（`activeOp` prop + 进度块）
+- **移入/恢复进度标签统一进行时文案**：「移入暂存区/恢复全部」→「正在移入/正在恢复」，与「正在处理/正在扫描/正在比对」语感对齐。`LogPanel.vue`
+- **BLAKE3 降级输出错误日志**：`blake3` 模块导入失败自动降级 SHA-256 时，向 `app.log`（`${TRIM_PKGVAR}/app.log`，经 `cmd/main` stderr 重定向）打一条 ERROR——含导入失败原因 + 修复提示（检查应用自带 `venv` 是否含 blake3 依赖）。此前降级完全静默，仅任务起始行「SHA-256（兜底）」与 `/api/info` 可查。`engine/hashing.py`
+
+### 修复
+- **移入暂存区进行中，暂存区抽屉单文件「恢复」按钮未禁用**：「重建暂存区/恢复全部」在 `moveRunning`（本会话 emit / 关窗重开 `activeOp.kind==='move'` 兜底）时已禁用，但列表内每个文件的「恢复」按钮漏了该判断——移入期间仍可点击单文件恢复，与进行中的写入竞态。修复：按钮 `:disabled` 补齐 `moveRunning` + `doRestore()` 加防御 guard（对齐 `doRestoreAll()` 风格）。`StagingDrawer.vue`
+
+## [0.1.46] - 2026-08-17
+
+### 新增
+- **文件索引工具（v1）**：独立「文件索引」页——选已授权目录建一次持久化索引（只读递归扫描，记录文件名/相对路径/大小/mtime/扩展名），之后搜索纯查本地 SQLite（`$TRIM_PKGVAR/index/index.db`）毫秒级返回：按文件名子串（大小写不敏感、支持中文）、扩展名/大小范围过滤、按名称/大小/修改时间排序、分页；附带目录快照（文件数/总大小/构建时间/读取错误数）；一目录一索引，可重建（原子替换）/删除（含取消进行中构建）；构建独立 daemon 线程，可显示进度、可取消，关应用窗后台续跑、重开可重连进度（EventSource snapshot 先行 + exit 收尾）。**隔离旁路**：索引构建不 import `tasks`/`runner`/`logstore`，不进 `/api/tasks`、`/api/logs`、`_dir_has_task` 互斥，只写自有数据目录、不写被扫目录，compare/duplicate 照旧实时遍历文件系统、**永不读索引**。文件：`engine/index.py`、`indexstore.py`、`indexbuild.py`（新）、`router.py`（+7 handler）、`frontend/src/pages/FileIndex.vue`、`frontend/src/components/IconIndex.vue`（新）、`api.js`（+7 函数）、`App.vue`（导航项 + 整区独立页）。+测试 `test_index.py`、`test_router_index.py`
+- **移入暂存区进行中退出弹窗**：移入时关应用窗弹「移入暂存区将在后台继续完成，可随时返回查看进度。确定离开吗？」（对齐「恢复全部」同款 `setExitPageTips`）。`ResultView.vue`（透出 moving 状态 emit）、`App.vue`（moveRunning 并入退出提示三路 watch）
+- **后台移入/恢复数量实时刷新（SSE 事件驱动，取代 2s 轮询）**：`useOps` 事件流透出 `moved {path,trashRel,size}` / `restored {trashRel}` / `snapshot`，App 收到事件逐文件增删 `trashEntries` → 结果面板「暂存区 N」+ 行内「已移入」标记关窗重开后**逐文件实时变**（不再 2 秒一跳）；`snapshot` 做基线、`exit` 收权威纠偏，EventSource 自动重连靠 snapshot 重基线补丢事件。`useOps.js`（回调透出）、`App.vue`（事件驱动 + 删轮询 + restore 状态重构）、`StagingDrawer.vue`
+
+### 改进
+- **「每组保留一个」→「每组至少保留一个」**：查重选择规则区文案统一（UI 复选框 + 相关注释），语义更准确——保证每组至少保留 1 份，多于 1 份按规则勾选移入。`DuplicateResult.vue`
+- **移入暂存区进行中禁用暂存区抽屉「重建暂存区/恢复全部」**：含关窗重开后后台移入（activeOp `kind==='move'` 兜底），避免与进行中的移入竞态；移入结束自动恢复可点。`App.vue`（`moveRunning` 共用 computed）、`StagingDrawer.vue`
+- **移除全部 2s 轮询**：后台恢复 `syncRestore` 与后台移入轮询统一改事件驱动（见新增）；抽屉列表后台恢复自动刷新加 300ms 防抖（事件驱动下 done 逐文件变，避免每文件一次全量拉取）。`App.vue`、`StagingDrawer.vue`
+
+### 修复
+- **仅剩 1 份可移入文件时选择规则仍会勾选它（整组被清空）**：一组 2 份文件、其中 1 份已移入暂存区或锁定后，点「选择规则」会把剩下那份也勾选上 → 整组清空，违背「每组至少保留一个」。根因 `reapplyRule()` 兜底条件 `movable.length > 1` 在可移入候选只剩 1 个时放行。修复：条件改 `movable.length >= 1`——规则不得选中组内全部可移入文件，仅剩 1 份时该组不做勾选（整组保留），与手动勾选已有保底一致。+回归 e2e「每组至少保留一个：锁定一份后点规则不勾选最后一份」（反证旧逻辑失败）。`DuplicateResult.vue`、`playwright-test/e2e.spec.js`
+- **后台移入暂存区数量不更新（与恢复全部不对称）**：恢复全部有 2s 轮询刷数量、移入没有，关窗重开后移入结束前「暂存区 N」不动。根治见新增（事件驱动逐文件实时，顺带恢复全部也去掉轮询）。`useOps.js`、`App.vue`
+
+## [0.1.45] - 2026-08-17
+
+### 新增
+- **移入/恢复关窗后继续后台跑 + 重开可见逐文件进度（统一后台操作机制）**：移入暂存区与恢复全部共用一套「后台操作」注册表（`_ops`：kind/scan_dir/status/total/done/failed/current/listeners）。移入也保证客户端断开（关应用窗）后由 daemon 请求线程继续处理到跑完；新增 `GET /api/ops/status?scanDir=`（发现该目录进行中的操作，返回 `{running, opId, kind, total, done, failed, current}`）和 `GET /api/ops/events?opId=`（重连流式：**先发最新快照、再流式后续逐文件事件，不回放历史**，断线自动重连以快照为权威重置计数）。前端新增 `useOps` 监控：选中对应查重任务时发现进行中操作并重连流式，右侧顶部显示「移入/恢复进行中」横幅——百分比条 + 当前文件 + done/total（与运行中任务进度条同款），操作结束自动刷新暂存区。`router.py`、`api.js`、`useOps.js`（新）、`App.vue`。+3 单测（move 注册清理 / ops-status 发现 / ops-events 快照先行流式）
+- **恢复全部进行中弹离开提示**：点「恢复全部」确认后立即置恢复进行中（不等 2s 轮询，关窗不遗漏弹窗），关闭应用弹「恢复全部将在后台继续完成，确定离开吗？」（与任务运行中同款 `setExitPageTips`）。`App.vue`、`StagingDrawer.vue`
+
+### 改进
+- **查重分布条 UI 微调**：图例（保留/已选中/暂存区）字号 `text-sm`→`text-xs`；「选择规则 / 每组保留一个 / 文件数 / 容量」标签文字色统一为右上角「暂存区」按钮同款；「容量」中间插全角空格与「文件数」等宽对齐。`DuplicateResult.vue`
+- **日志面板默认高度 200→96px**（收起后展开记忆值同步）。`LogPanel.vue`
+
+## [0.1.44] - 2026-08-14
+
+### 修复
+- **查重结束后任务短暂消失又出现（0.1.43 回归）**：SSE `exit` 到达 → 任务状态变终态，`activeTaskArray` 立即把任务从运行列表剔除，而历史列表要等 `refreshRuns()` 异步拉 `/api/logs` 返回后才出现，中间一段窗口任务两边都不在 → 一闪而过；且后端 `_finish` 先发 `exit` 事件再落盘，前端抢在落盘前拉日志会查不到记录（任务消失后不回来，需手动刷新）。修复：① 后端 `_finish` 先 `save_run` 落盘、再发 `exit`，保证前端收到 exit 时历史记录必已就绪；② 前端任务进入终态时打 `pendingHistory` 桥接标记，`activeTaskArray` 保留这类任务显示——桥接卡片隐藏「终止」按钮与进度条、改显示结果摘要+参数行（与历史卡片一致），`refreshRuns` 完成后清标记 → 任务从运行卡片无缝切到历史卡片，全程可见不闪没。`runner.py`、`useSSE.js`、`App.vue`、`TaskList.vue`。+1 单测（`_finish` 落盘先于 exit 事件）
+
+### 改进
+- **查重分布条新增「文件数」指标条**：原只有「容量」分段条（按字节占比填充），小文件多时比例严重失真（几十个小文件占不到几个百分点）。新增「文件数」分段条（按文件个数占比填充），与「容量」条上下并排、共享图例——容量反映「占磁盘多少」、文件数反映「多少个文件」，两个视角可对照。`DuplicateResult.vue`
+
+## [0.1.43] - 2026-08-14
+
+### 修复
+- **扫描期 `/api/path/convert` 反复 POST 洪流（网关 502 / 大量瞬时 POST）**：`useSemanticPath.convertPaths` 只缓存「成功返回 semanticPath」的路径；对无语义映射的路径（如 ZFS 池路径 `/vol2/@team/ZFS-02`，后端返回 `result: []`）不缓存 → `TaskList` 的路径转换 watch 每次任务更新都触发（扫描时 taskMap 高频变化：进度/inflight/dupGroup 每帧都变），把未缓存路径**每秒数次重发 POST**，请求洪流拖垮网关 → 其他请求 502。修复：转换结果为空的路径**缓存为原值**（标记「已尝试」），后续 watch 不再重发；网络失败仍不缓存、保留下次重试。`useSemanticPath.js`
+- **恢复全部中途关窗重开，前端状态不恢复（结果面板不自动刷新 / 「恢复全部」按钮亮起）**：恢复全部跑在 daemon 请求线程，客户端断开（关窗）不中断、恢复继续跑完，但后端无任何记录表明恢复正在进行——重开后前端没有 live 流可听，`restoringAll` 等局部状态已重置 → 结果面板「暂存区」不随恢复递减、「恢复全部」按钮重新亮起。新增后端内存注册表 `_restore_ops`（scanDir → `{total,done,failed}`）+ `GET /api/trash/restore-status` 查询接口；`restore-stream` 开始注册、逐文件更新、`finally` 注销（恢复完/断连跑完都清）。前端 `App.vue` 持有 `restoreOp` 并轮询状态 + `loadTrash()` → 结果面板「暂存区」随恢复实时递减（自动刷新）、恢复结束停轮询并最后一次刷新；`StagingDrawer.vue` 接 `restoreOp`——后台恢复进行中按钮禁用 + 显示进度（本会话本地流仍走 `restoringAll`）、抽屉列表随恢复推进实时刷新。`router.py`、`api.js`、`App.vue`、`StagingDrawer.vue`。+3 单测（恢复流跑完注销 / 引擎抛错 finally 兜底注销 / restore-status 无恢复与进行中两种返回）
+- **E2E 定位器随分布条文案更新**：恢复全部测试断言 `已移入 0` → `暂存区 0`（配合下方分布条文案改动，否则 E2E 恢复全部用例失败）。`playwright-test/e2e.spec.js`
+
+### 改进
+- **打包剔除开发缓存目录**：`fnpack` 无排除项，`make build` 打包前自动清理 `__pycache__` / `.pytest_cache` / `.DS_Store`（跳过 node_modules）——包体积从 97 条目降到 55，不再携带测试缓存与 macOS 垃圾文件。`Makefile`
+- **查重结果大结果分批渲染（卡爆）**：原一次性 v-for 渲染全部重复组（数千组 × 每组多文件）→ 默认只渲染前 100 组（`visibleGroups = groups.slice(0, renderCount)`），滚动区底部新增「已显示 X / N 组」+「加载更多 +100」+「加载全部结果（共 N 组）」按钮；「加载全部」用 rAF 每帧追加 500 组 + 进度 %，点完不卡死（已渲染组不重建）；**逻辑数据（分布条/勾选/移入）仍基于完整结果**，只限制 DOM 展示层。`DuplicateResult.vue`
+- **流式推送不重置渲染上限**：渲染上限由 `watch(result)` 改 `watch(result.scanDir)`——只在换任务（scanDir 变化）时重置，流式 `dupGroup` 每帧 flush 不再把用户「加载更多/全部」的选择打回 100。配套 `useSSE.connect` 支持透传任务 `args`、App 流式合成 result 带 `scanDir`（创建/重连两处透传）。`useSSE.js`、`useTaskCreate.js`、`App.vue`、`DuplicateResult.vue`
+- **查重分布条文案**：进度指标条「已移入」改「暂存区」、「待移入」改「已选中」（仅移入暂存区进行中显示「待移入」）。`DuplicateResult.vue`
+- **交互 demo**：新增 `frontend-demo/dup-load-demo.html`——查重结果「加载更多/全部」交互 + 结果规模调节（100~20,000 组）+ 勾选文件 + **模拟流式推送**（演示任务进行中页脚计数实时涨、加载选择不被流式 flush 打回）+ 深色模式
+
+## [0.1.42] - 2026-08-14
+
+### 新增
+- **移入暂存区改流式逐文件**：原「200 一批」批量请求 → 单次 POST 流式（SSE 逐文件推 `moved`/`skipped`/`exit`）。新增 `POST /api/duplicate/move`（`_handle_move_stream`，复用 `_delete_one`，客户端断开即停、已落盘的留暂存区）。前端「已移入」**逐文件 +1 实时涨**、进度条逐文件走、复核跳过项即时进失败列表（不再只在结尾汇总）。`router.py`、`api.js`（`moveDuplicatesStream`+`readSSE`）、`DuplicateResult.vue`（`liveMoved` 乐观叠加 + `trashPaths` 联合）
+- **恢复暂存区改流式逐文件**：抽屉「恢复全部」与删任务「恢复全部」原 200 一批 → 单次 POST 流式。新增 `POST /api/trash/restore-stream`（`_handle_restore_stream`，复用 `trash.restore`）。`router.py`、`api.js`（`restoreTrashStream`）、`TaskList.vue`、`StagingDrawer.vue`
+
+### 改进
+- **运行中重复组结果节流渲染**：dupGroup 事件改非 reactive 缓冲 + 400ms 批量 flush 到 `partialGroups`，避免高并发哈希完成时每秒上百事件触发全列表重渲染打崩页面。`useSSE.js`（`DUP_FLUSH_MS`/`_flushDup`/`dupBuffers`）；`DuplicateResult.vue` group/file `:key` 改稳定 `g.key`/`f.path`，Vue 复用 DOM 只 patch 新增行
+- **任务状态轮询兜底**：任务后端已完成但 SSE 的 `exit` 被网关缓冲/连接陈旧漏送时，前端会一直停在「运行中」、计时无限走。新增 10s 周期轮询 `/api/task-status`（普通 GET 不受 SSE 缓冲影响）取权威终态，漏 exit 时翻牌 + 关陈旧连接 + 触发回调，后续 refreshRuns/history 由 App watch 接管。`useSSE.js`（`STATUS_POLL_MS`/`_pollAll`）
+- **首尾局部哈希块大小选项**：64KB/256KB/1MB → **64KB/1MB/16MB**（放大系数）；默认值 64KB → **1MB**。`useTaskCreate.js`（`BLOCK_SIZES` + 表单默认）、`router.py`（5 处兜底默认）、`DuplicateResult.vue`（结果兜底）
+- **「每组保留一个」切换即时重算**：原勾选/取消该开关不触发重算（结果停留在旧选择）。抽出 `reapplyRule()` + `watch(keepOnePerGroup)` 切换时按当前规则重算——开多留一个、关补回留的那份。`DuplicateResult.vue`
+- **「选择规则」标签样式统一**：`选择规则` span 颜色 `slate-400→slate-500`，与右侧「每组保留一个」label 同色。`DuplicateResult.vue`
+- **删除模式选择下方黄色提示条**：查重/比较选中模式后的 `modeHint` 琥珀色说明条移除（连 `modeHint` computed 及 `MODES` 的 `.hint` 字段一并清掉，无残留死数据）。`pages/Duplicate.vue`、`pages/Compare.vue`、`useTaskCreate.js`
+- **恢复全部不再只恢复 200 条**：抽屉「恢复全部」原用 `pageSize:1000000` 拉全量，被后端 pageSize 上限 200 截断 → 每次只恢复 200。改走不分页 `listTrash`（no-page 返回全量），一次恢复全部。`StagingDrawer.vue`
+- **恢复全部「已移入」逐文件实时递减**：抽屉恢复全部流式逐文件恢复时，每个 `restored` 事件按 `trashRel` 定位原 `rel` 并 `emit('restored-one')`，App 实时从 `trashEntries` 移除已恢复条目——结果面板「已移入」随恢复进度逐文件减少（不再等全部完成才一次性归零）。`StagingDrawer.vue`、`App.vue`
+- **选择规则区两行布局**：`选择规则` 标签 + `每组保留一个` 复选框独占一行，规则按钮（`修改·最新` 等）换到下一行，避免一行内挤爆。`DuplicateResult.vue`
+
+### 修复
+- **`liveMoved.value` 致 DuplicateResult 渲染崩**：`liveMoved` 从 `ref(new Set())` 改 `reactive(new Set())` 后，`trashPaths` 里漏改的 `liveMoved.value`（undefined）迭代抛 `TypeError`，`trashPaths` computed 崩 → 整个查重结果组件渲染失败（工具栏在、组列表空）。改为 `liveMoved`
+- **移入/恢复暂存区流式响应卡死（进度卡 100%）**：`_handle_move_stream`/`_handle_restore_stream` 误设 `Connection: keep-alive`——http.server 的 `send_header` 遇 keep-alive 会把 `close_connection` 置 False，一次性短流发完 `exit` 后连接不关闭，前端 `readSSE` 永远等不到 EOF（done），`moving` 卡 true、进度停在 100%。移除两处 keep-alive 头（长连接任务流 `_handle_sse` 保留）。+2 单测（`tests/test_router_stream.py`：断言流式短流响应头无 keep-alive、`close_connection` 保持 True）
+- **刷新按钮后「已移入」陈旧为 0（暂存区有数据）**：`onRunsRefresh`（刷新按钮）只 `refreshRuns()` 不同步 `loadTrash()`，移入后 `emit('deleted')` 漏跑时 `trashEntries` 保持空 → 结果面板「已移入」显示 0。刷新按钮/删任务后补 `loadTrash()` 兜底，让「刷新」真正拉最新状态。`App.vue`
+- **恢复全部完成后「已移入」不归 0（需手动刷新暂存区）**：restore-stream 卡住（同上）→ 恢复全部完成后的 `emit('restored')` 不执行 → App `loadTrash` 不刷新，已移入停在恢复前。修复流式连接后完成即自动归零；恢复过程中另逐文件同步（见改进）。`router.py`、`StagingDrawer.vue`
+
+## [0.1.41] - 2026-08-14
+
+### 改进
+- **任务开始日志恢复哈希算法名**：0.1.37 把开始行的 `BLAKE3/SHA-256` 改成抽象「哈希」（误伤），复盘日志无法判断当时算法。`runner.py` 恢复显示 `hashing.HASH_ALGO`（SHA-256 带「（兜底）」后缀，与「关于」页一致）。例：`[开始] 查重：/xxx（推荐 · 块64KB · 不过滤 · BLAKE3）`
+- **推荐/完整模式隐藏「大小」选择规则**：推荐/完整同组大小一致，按大小选无意义 → 隐藏「大小·最大/最小」；极速（同组可不同大小）保留。`DuplicateResult.vue` `visibleRules` 按 mode 过滤 + `watch(mode)` 清残留 size 规则
+- **删除任务确认文案**：「删除后无法恢复，确定删除吗？」→「删除后可重新扫描，确定删除吗？」（删的是任务记录，文件不动，可重扫）。`TaskList.vue`
+
+### 修复
+- **查重选择规则语义反转**：原「规则定保留项、勾选其余」→ 改为「规则勾选匹配项、移入/锁定是后续独立动作」（点「路径最长」→ 路径最长的文件被勾选，而非保留）。`pickKeep`→`pickRuleMatches`（极值并列全返）、`toggleRule` 改勾选匹配项、去掉「保留：」标签；「每组保留一个」作兜底（规则若选中组内全部可移入文件则留一个）。本地 DOM 实测两方向正确
+- **极速模式说明与实现不符**：`manifest desc`（`极速（文件名+大小）`）与 `README`（「仅比对文件名 + 大小」）写的还是旧定义，但代码 0.1.37 已重定义极速为「仅按文件名分组（不读内容、不要求同大小）」。三处文案改对：manifest desc→「极速（仅文件名）」、README→「仅按文件名分组（不读内容）」、CLAUDE.md 同步
+
+## [0.1.40] - 2026-08-14
+
+### 新增
+- **设置「应用反馈&建议」加「飞牛论坛主页」链接**：飞牛文件收集、GitHub 旁加第三条 `https://club.fnnas.com/home.php?mod=space&uid=64436`。`Settings.vue`
+
+### 改进
+- **检查更新：版本号去 v**：当前版本、发现新版本显示去掉字面 `v` 前缀（`0.1.39` 非 `v0.1.39`）；GitHub Release tag 同步不带 v。`Settings.vue` + 发布流程
+- **检查更新：「前往下载」指向 Release 页面**：`updatecheck.fetch_latest_release` 的 `downloadUrl` 一律取 `html_url`（`.../releases/tag/<version>`），不取 fpk 资产直链——由用户在 release 页下载。`updatecheck.py`
+- **检查更新：无 Release/Tag 不再当错误**：仓库未发 Release 且无 Tag 时显示「暂无更新信息」（灰字），不再红字报「检查更新失败」。`fetch_latest_release` 返回 `None`（不抛）、`check_update` 无 error、前端加 `latest` 空分支。单测同步
+- **检查更新：1 小时结果缓存**：进程内 TTL 缓存，重复点击不重复请求 GitHub，避免撞 60 次/小时/IP 的未认证配额。只缓存成功结果、错误不缓存（可立即重试）、`force` 跳过、升级后 current 变化自动 miss、`clear_cache()`；仅对默认真实 fetcher 缓存（测试自定义 fetcher 跳过）。+6 单测
+- **设置「关于」删「作者」行**：`Settings.vue`
+- **manifest 开发者/发布者改 Haorran**：`maintainer`/`distributor` 及两者 URL 改为 `https://github.com/Haorran/file-tools/releases`
+- **空状态 amber 说明条上移**：`ResultView.vue` 空状态容器 `py-12`→`pt-4`，离「创建任务」按钮近 32px（实测 64px→32px）
+
+### 修复
+- **检查更新：后端读不到当前版本（回退 0.0.0）**：`updatecheck._manifest_path` 少一层 dirname——从 `app/server/` 到包根（manifest 所在）应上三层，只上了两层落到 `app/`。改为三层（与 `server.py` 同口径），强化单测（断言 ≠0.0.0 + 路径存在）。单测同步
+- **窗口标题随菜单切换变化**：`App.vue` 切菜单时 `watch(activeTool)` 调 `sdk.setTitle(当前菜单项名)`，标题变成「单目录查重」「设置」等。改为一次性 `sdk.setTitle('文件工具箱')`，标题恒定
+
 ## [0.1.39] - 2026-08-14
 
 ### 新增
