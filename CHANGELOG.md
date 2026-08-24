@@ -1,5 +1,175 @@
 # CHANGELOG
 
+> **CHANGELOG 编写规则**（写新版本条目前先读）：
+> - **位置**：写在头部（最新版本在最上），标题 `## [x.y.z] - YYYY-MM-DD`
+> - **分类**：`### 新增` / `### 改进` / `### 修复`
+> - **条目**：`- **标题**：描述，末尾跟上具体改动的**源码文件**（如 `compare.py`）
+> - **非源码不写**：build 产物（`app/server/www/assets/*.js`）等不列入
+> - **版本号**：由 `make release` 自动 bump（如 `0.1.52`→`0.1.53`），不手写
+> - **时机**：`make release` 写新版本条目；`make build` 同版本追加/不写；临时测试包不写
+
+## [0.2.4] - 2026-08-23
+
+### 改进
+- **FTS 首查预热**：构建完成后后台对 `file_fts` 全表 count 把页读入 OS 缓存，消掉首次关键词搜索 2.3-3.2s 冷启动（回稳态 ~300ms）。`router.py`
+- **FTS 启用估算区间校准**：trigram 每字符开销 [5,10] → [10,16] B/字符（0.2.2 现网实测 ~12.55B/字符，原区间低估上限 ~25%），同步 `docs/DESIGN_FTS_SEARCH.md`（+20~30%）。`indexstore.py`、`docs/DESIGN_FTS_SEARCH.md`
+- **设置页 FTS 卡片去动态化**：外部卡片不再显示会过期的库大小/估算（缩库后不刷新失真），改为静态提示；动态估算只在启用弹窗打开时实时拉取。`FileIndex.vue`
+
+### 修复
+- **搜索缓存失效时机（L4）**：`save_index` 内容变化分支 `clear_search_cache()` 移到 `conn.commit()` 之后（避免「先清缓存后 commit」窗口内并发搜索读到旧数据回填缓存）；卡片文案同步为「索引内容变化时自动失效」（内容不变的 skipped 重建缓存仍有效，行为合理）。`indexstore.py`、`FileIndex.vue`
+- **删除索引后「记录」页签残留幽灵记录（L2）**：删除成功后若停在「记录」页签一并刷新记录，不再显示已删索引的旧记录。`FileIndex.vue`
+- **fmtBytes 单位错标（L3）**：÷1024 却标注 MB → 改 1000 进制真 MB/GB（与用户常识一致）。`FileIndex.vue`
+- **自动刷新间隔输入（L6）**：`refreshStaleHours` 前端限制 1-24 整数（min/max/step + blur 归一化），不再静默钳 0→24。`FileIndex.vue`
+- **根路径索引尾部斜杠（L7）**：`/etc/` 与 `/etc` 归一为同一目录（不产生重复索引），根名徽章不再空白。`indexbuild.py`、`FileIndex.vue`
+- **停用 FTS 后状态残留（L8）**：`fts/status` 不再残留 done/total/root 进度字段（drop 后重置内存态）。`router.py`
+- **带过滤关键词搜索慢（L10）**：FTS 分支放开 ext/size 过滤限制——命中集 + 过滤条件下推，单/跨目录带过滤搜索不再回退 LIKE 全 root 扫描（~10s → 毫秒级）。`indexstore.py`、`tests/test_fts.py`
+- **删除弹窗提示不随勾选变化**：删除索引确认弹窗勾选「同时删除配置/历史」时，提示文案动态改为「同时删除：…」。`FileIndex.vue`
+- **enable_fts 构建后 WAL 残留（N1）**：FTS 构建结束后缺少显式 checkpoint，服务器持只读连接时「连接关闭自动 checkpoint」不触发 → WAL 堆积约 95MB + `measuredBytes`（停用弹窗「释放存储」）虚高。补 `_checkpoint_truncate(retries=3)` 后再量实测占用，WAL 即时回收，停用弹窗数值准确。`indexstore.py`
+- **FTS 首查预热温错对象（N2，同版本追加修正）**：`_fts_warmup` 原预热 `count(file_fts)` 只扫 content 表（`file_fts_data`），MATCH 查询主导冷读的是 trigram 倒排索引（`file_fts_idx`）——温错页；且预热为异步 fire-and-forget，与用户首查竞态（预热没跑完就放行）→ 构建后首查仍 2.5-4.8s 冷。修正：改温 `file_fts_idx` + `idx_files_root_size/name` 排序索引页（补 name 索引），并改为**构建完成信号前同步预热**（`building=False` 前置），保证首查即热。`router.py`
+- **跨目录 FTS 带过滤搜索仍慢（N3，L10 修复不完整）**：`search_all` FTS 带过滤分支用「files 驱动 + 行值 IN 子查询」，全 .dat 数据下 ext 过滤零选择性导致 files 全表扫 ~7s；改为 `FROM file_fts JOIN files ON PK` 令 FTS 命中集驱动按主键反查，恢复毫秒级。`indexstore.py`、`tests/test_fts.py`
+
+## [0.2.3] - 2026-08-22
+
+### 改进
+- **删除索引确认弹窗新增勾选项**：「同时删除该目录的索引配置（设置）」「同时删除构建历史与快照」两个勾选项（默认都不勾）——删除索引只删索引数据（files/indexes/FTS），配置/历史/快照**保留**、不再随删除静默丢失，重建后历史自然续接；后端 `delete_index` 加 `purge_settings`/`purge_history` 参数，路由按弹窗勾选透传，响应文案区分删除范围。`ConfirmDialog.vue`（通用 slot）、`FileIndex.vue`、`api.js`、`router.py`、`indexstore.py`、`tests/test_index.py`、`tests/test_router_index.py`
+
+### 修复
+- **FTS 停用仍不物理缩库（0.2.2 修复不完整）**：0.2.2 只补 `_schedule_shrink()`，但走 freelist 占比阈值（`_VACUUM_FREE_RATIO=0.3`）——大基数索引下 FTS 体积占比系统性偏低（实测 ~20%），删表后占比 <30% → VACUUM 跳过、物理文件原地不动。改为 `drop_fts` 触发**强制后台 VACUUM**（`force=True` 跳过占比阈值，仍保留活跃构建中断守卫），停用即真正回收磁盘空间。`indexstore.py`、`tests/test_index.py`
+- **单目录 FTS 搜索默认排序无加速（~2.5s）**：单目录 FTS 分支 SQL 缺 `INDEXED BY`，计划器扫该 root 全部行 + 逐行 IN 探测（成本随 root 行数线性）；前端默认 `sort=size desc` → 大索引单目录默认搜索 FTS 几乎无加速。补 `INDEXED BY idx_files_root_size/name`（对齐非 FTS 分支 sort 映射）恢复 root 限定扫描。`indexstore.py`、`tests/test_fts.py`
+- **删除索引整库重建全部二级索引（大库删小索引 45-80s）**：`delete_index` 无条件 DROP 6 索引 → 删行 → 整库重建（重建随整库行数而非被删行数，1.2M 行库删 2 行也 45-80s）。改为**按被删规模分派**：被删 root 占整库 ≤20% 走逐行 DELETE（SQLite 每行维护索引，毫秒级）；超阈值才 DROP+重建（避免超大根逐行维护的 HDD 随机写分钟级）。`indexstore.py`、`tests/test_index.py`
+
+## [0.2.2] - 2026-08-21
+
+### 新增
+- **搜索接口耗时展示**：单目录 / 全部索引 / 历史快照三个搜索接口返回 `elapsedMs`（`time.monotonic()` 实测查询耗时），结果头部「共 X 项」后追加「· 用时 Y 秒」（<1s 两位小数、≥1s 一位小数，同款 `tabular-nums` 样式；清空搜索时同步重置）。`router.py`、`FileIndex.vue`
+
+### 改进
+- **无变化重建跳过索引落库（save_index A+B 合体）**：`indexes` 加 `content_sig` 列（文件清单 blake2b 顺序无关指纹，覆盖 rel+size+净化后 mtime_ns/created_ns+ext）；`save_index` 分两层——**签名一致（内容无差别）→ 跳过 files/indexes 整表重写**，仅 1 行 UPDATE 刷新 built_at（顺带更新）+ errors（自动刷新 always 模式不再每开一次应用就全量擦写，HDD 分钟级→毫秒级）；**内容有变 → 读旧行 diff 只写变化行**（不再整表 DELETE+INSERT），FTS 名字变化同源 diff（复用已读旧行不再单独 SELECT）。`index_builds` 加 `skipped_db`，记录页签显示「内容无变化·跳过落库」徽标（说明构建为何毫秒级，避免用户以为坏了）。`indexstore.py`、`indexbuild.py`、`FileIndex.vue`、`tests/test_index.py`、`docs/DESIGN_FILE_INDEX.md`
+- **FTS 启用/停用弹窗存储动态化**：启用弹窗「额外占用存储预计增加 约 X~Y（当前索引库约 Z）」**动态计算**——当前库大小为 index.db 实际文件大小（含 WAL），预计增量 = 全部文件名总字符数 × trigram 每字符开销区间 [5,10]（实测 ASCII 长名 ~6.2B/字符、现网混合名 ~8~10B/字符）；「代价（请确认）：」**红色加粗**；停用弹窗「释放存储 Z」显示 **enable_fts 实测**的 FTS 实际占用（构建前后库大小差存 `fts_state` 表）；设置卡片同文案动态化（会话内复用估算、弹窗打开强制重拉）。新增 `GET /api/index/fts/estimate`。`indexstore.py`（`fts_estimate` + `_db_total_size` + `fts_state`）、`router.py`、`FileIndex.vue`、`ConfirmDialog.vue`（`warnPrefix` prop）、`api.js`、`tests/test_fts.py`
+- **全部索引页构建完成自动刷新**：索引构建完成（SSE `done`）且停在搜索页时自动重跑当前搜索 + 刷新 ext 补全（含「全部索引」跨目录视图——重建/新增索引后搜索结果、per-root 计数、扩展名自动更新，不再一直显示旧结果）。`FileIndex.vue`
+- **左栏行内按钮构建期间改停止/取消**：索引构建/排队期间隐藏「重建/删除」（重建必 409、删除是「停+删」，均不适合作为行内主操作），改为「停止」（running/stopping）/「取消」（queued 出队）入口（复用记录页签 stopLiveTask 语义），空闲才显示重建/删除。`FileIndex.vue`
+
+### 修复
+- **删除索引后 -wal 残留峰值不缩**：大删除/删表写入全部进 WAL，被动 checkpoint 只并入主库**不截断文件**；小删除（freelist 占比 <30%）时 `_shrink_db` 跳过 VACUUM 且从不 checkpoint-truncate → -wal 永久残留峰值（实测 117MB 库删小 root 残留 69MB）。新增 `_checkpoint_truncate`（`PRAGMA wal_checkpoint(TRUNCATE)`，并发读者/写者短重试）；`_shrink_db` 先截断 WAL 再算 ratio（无论是否 VACUUM 都截断）；`delete_index`/`drop_fts` 事务后同步截断（WAL 及时回收，不依赖后台线程时机）。`indexstore.py`、`tests/test_index.py`
+- **停用全文搜索后 index.db 不释放空间**：`drop_fts` 只删 file_fts/清指纹，漏了触发缩库 → 页只进 freelist、物理文件原地不动（对比 `delete_index` 有 `_schedule_shrink`）。补 `_schedule_shrink()`（FTS trigram 表占库 50~80%，删表后空闲页占比远超阈值 → 后台 VACUUM 回收）。`indexstore.py`、`tests/test_fts.py`
+
+## [0.2.1] - 2026-08-21
+
+### 改进
+- **卸载「保留数据」保留配置与数据**：卸载向导选「保留数据」现在保留 @appdata + @appconf + @appshare（**配置和数据都留**，此前会删 @appconf、仅留数据），选「删除所有数据」才全删；向导文案同步为「保留配置与数据，仅卸载应用」。`cmd/uninstall_callback`、`wizard/uninstall`
+- **文件索引设置独立文件化**：全局（`__global__`）与每目录设置从 index.db 的 `index_settings` 表迁到独立文件 `$TRIM_PKGETC/index-settings.json`（@appconf 配置目录；无 env 回退 `TRIM_PKGVAR`/`.localdata`）——**与索引数据分离，迁移/拷贝 index.db 不再带走配置**（测试机不会继承主力机 autoRefresh 配置去重建不存在目录）；删索引同步清该目录设置；升级后老表设置不迁移、回默认。`indexstore.py`、`tests/test_index.py`
+- **文件索引搜索页签自动刷新**：切回「搜索」页签时重跑当前搜索（保留关键词/过滤/排序/页码，索引被删/重建后不再显示旧结果）。`FileIndex.vue`
+- **文件索引页签行右侧刷新按钮**：「搜索 / 设置 / 记录」页签行最右侧新增手动刷新按钮（复用查重运行记录的 `IconRefresh` 样式），按当前页签刷新数据——搜索重跑、设置重载表单、记录重载构建记录；页签切换与刷新按钮共用 `refreshCurrentTab` 一套加载逻辑。`FileIndex.vue`
+- **搜索缓存（LRU）开关与手动清空**：全局设置（全部索引 → 设置）新增「搜索缓存（LRU）」卡片——开关（`searchCache`，默认开，禁用后每次搜索实时查询且清空旧缓存）+「清除缓存」按钮（`POST /api/index/cache/clear`）；`search`/`search_all` 按开关门控缓存读写。`indexstore.py`、`router.py`、`FileIndex.vue`、`api.js`、`tests/test_index.py`、`tests/test_router_index.py`
+
+### 修复
+- **快速切目录竞态（扩展名 chips / 搜索结果 / 快照下拉显示上个目录数据）**：三处异步加载加请求序号防护（`extReqSeq`/`searchReqSeq`/`snapshotReqSeq`）——响应回来时序号不是最新即丢弃，上个目录晚到的数据不再覆盖当前目录；切目录时立即清空扩展名 chips（不再短暂显示上个目录的 Top10）。`FileIndex.vue`
+- **单目录搜索性能回归（0.1.53 毫秒级 → 秒级）**：v1.3 加的覆盖索引 `idx_files_size (size,root,rel)`/`idx_files_name` 让 SQLite 计划器对单目录 `ORDER BY size/name` 改选**全索引扫描**（目标 root 在全局序里不密集时 117 万行全扫 → 秒级）。改为单目录 `search()` 按 sort **强制 root 限定索引**（`COUNT` 用 `idx_files_root_name`，`ORDER BY size` 用 `idx_files_root_size`，`ORDER BY name` 用 `idx_files_root_name`），恢复 0.1.53 的 root 限定扫描（跨目录 `search_all` 仍走覆盖索引不受影响）。`indexstore.py`、`tests/test_index.py`
+- **删除索引目录慢（大目录数分钟超时、小目录也慢）**：两个元凶——① `delete_index` 在请求内**同步 `VACUUM` 整个共享 `index.db`**（多目录共库，实测 66 万 + 50 万行两目录共 116 万行，删任一目录都整库重建）；② `DELETE FROM files WHERE root=?` **逐行维护 6 个二级索引**（每行随机写 6 个 B-tree，HDD 上 60 万行分钟级 + WAL 持续写入——这才是「删完还一直写盘」的主因）。改为：**先 DROP 6 个二级索引 → 只动主键的 range 快删 → 批量重建索引**（单事务原子回滚）+ **缩库异步**（删完仅当空闲页占比 ≥30% 才后台 `VACUUM` 回收，小删除跳过、空页复用；开始前/进行中检测到活跃索引构建自动跳过或中断，避免写锁挡构建落库；同一时刻只允许一个缩库）。**真实 NAS 硬件实测（真实库副本）**：逐行 DELETE 66 万行 >2min 未完成 → 新逻辑 **38.3s**（DROP 12.1s + 快删 9.6s + 重建 14.0s + commit 2.6s）。`indexstore.py`、`tests/test_index.py`
+
+## [0.2.0] - 2026-08-21
+
+> 版本跳跃 0.1.58 → 0.2.0：FTS 全文搜索大功能，次版本升级。
+
+### 新增
+- **全文搜索加速（FTS5 trigram，可选）**：关键词搜索（≥3 字符）从 1~2 秒 降到 **<100ms**。默认**关闭**（存储/性能均衡）；「全部索引 → 设置」页「全文搜索加速」卡，用户**知情开启**（确认弹窗明确存储代价约 +50~80%）。每目录存 **(rel,name) 内容指纹**：重建索引内容无差别时 **FTS 完全跳过（重建速度零影响）**，有变化时 **只 diff 增量**（同一事务，永远一致）。2 字中文词（照片/视频等）自动回退 LIKE 保持子串语义。`indexstore.py`（`file_fts` trigram 表 + `fts_meta` 指纹 + FTS 搜索路由）、`router.py`（`/api/index/fts/build|status|drop` + 后台回填任务）、`FileIndex.vue`（三状态卡片 + 知情确认 + 进度 + 停用）、`api.js`（设计见 `docs/DESIGN_FTS_SEARCH.md`）
+- **搜索 LRU 缓存**：FTS 未启用时缓存重复关键词搜索结果（重复搜索秒回）；**启用 FTS 自动禁用并清空缓存**（互斥——FTS 启用后搜索走 FTS 不再用缓存）；索引重建/删除、FTS 启停均清缓存防过期。`indexstore.py`
+
+## [0.1.58] - 2026-08-20
+
+### 新增
+- **全局设置（全部索引）**：左栏「全部索引」→ 设置页签从占位改为**可编辑的全局设置表单**——自动刷新开关 + 刷新策略（每次/超 N 小时）+ 索引快照份数 + 定时任务（规划中占位，`schedule` 字段 JSON 预留）。作为所有索引的默认设置：`get_settings` 在无 per-index 设置时**回退全局**（未来新增索引自动继承）；「**应用到所有索引**」一键覆盖现有各目录（确认弹窗）。`indexstore.py`（哨兵 root `__global__` + `get/save_global_settings` + `apply_global_to_all`）、`router.py`（`/api/index/settings/global` + `/apply`）、`api.js`、`FileIndex.vue`
+
+### 改进
+- **索引快照提示文案**：设置页提示改为「将保留最近 N 份有变化的完整清单，占用随目录规模和变化频率增长」（对齐无差别去重只保留有变化状态）。`FileIndex.vue`
+- **搜索过滤 UI 重做（无弹层方案）**：改为**三行内联布局**——第一行搜索框 + 排序/升降序**分段按钮**；第二行大小 **9 档 chips 多选**（小于 100KB/100KB–1MB/1–5MB/5–10MB/10–50MB/50–100MB/100–500MB/500MB–1GB/大于 1GB，多选取并集，**空选=不过滤**）；第三行扩展名 **Top10 chips**（按出现次数降序，`list_exts`/`list_all_exts` 改返回 `[{ext,count}]`）+ 自定义输入框（点击出建议列表、输入过滤、**无下拉箭头**）。大小/扩展名 chips **点选选中、再点取消**（去掉「全部」项，空选即全部）。彻底去掉弹层式下拉（此前 FilterDropdown 方案）。后端 `search`/`search_all`/`filter_entries` 支持多区间 OR（`sizeRanges`），旧 `minKB/maxKB` 单区间仍兼容。`FileIndex.vue`、`indexstore.py`、`router.py`（`_parse_size_ranges`）、`api.js`
+- **索引构建进度（预统计 + 百分比 + 进度条）**：构建前先轻量预统计文件数（`walker.count_files`，口径与 `scan_tree` 一致，cap 提前终止判大目录、finish 补全 total），`progress` 事件携带 total；左栏构建行显示进度条 + 「已扫 N/M (P%)」（统计中阶段显示不定动画进度条），记录页签同步显示百分比；正式扫描进度节流 ~10 次/秒（大目录逐文件事件量占满前端主线程，仿查重引擎），total 收敛 force 发保证到 100%。`walker.py`、`indexbuild.py`、`FileIndex.vue`
+- **文件索引默认选中「全部索引」**：进入索引页默认选中左栏「全部索引」（右侧直接显示跨目录搜索 / 全局设置 / 跨索引记录），删除「什么都不选」空态引导；删除当前索引后回退「全部索引」。`FileIndex.vue`
+- **索引结果分页器**：上一页/下一页外增加**页码列表**（两端固定 + 当前页±1，中间用 `…` 省略，总页 ≤7 全列出，当前页蓝色高亮）+ **每页大小选择**（50/100/150/200，切换后重置第 1 页并按新大小重算总页数）。`FileIndex.vue`
+- **结果面板布局（筛选区与分页固定，仅结果列表滚动）**：搜索页签改为三段式 flex——筛选区（标题/过滤/计数）固定顶部、分页固定底部，仅结果列表在中间独立滚动（`flex-1 min-h-0 overflow-y-auto`，滚动条贴右缘）；设置/记录页签各自独立滚动。`FileIndex.vue`
+- **构建阶段细分（遍历中 / 构建中 / 落库中）**：扫描完成后广播 `phase='store'`（落库中），前端按阶段显示——预统计「遍历中…」→ 扫描「已扫 N/M (P%)」→ 落库「落库中…」（`save_index` 大事务 + 快照压缩耗时数秒，不再卡在 100% 干等）。`indexbuild.py`、`FileIndex.vue`
+- **索引搜索空查询免全表 COUNT**：跨目录 `search_all` 与单索引 `search` 的空查询（列出全部，无关键词/扩展名/大小过滤）`total` 直接用 `indexes.file_count`，跳过对 `files` 表两次全表 COUNT 扫描——首次进入「全部索引」自动搜索 117 万行从秒级降到毫秒级（实测 20 万行 27ms）。`indexstore.py`
+- **建索引目录输入框占位文案**：去掉 `/vol1/1000/…` 路径假设前缀，只保留「选择要索引的目录」。`FileIndex.vue`
+- **文件索引 UI 图标跨平台统一**：🔎 / 📁 / ⟳ emoji 换 lucide SVG 图标（`IconSearch`/`IconIndex`/`IconRefresh`，复用侧边栏同款），记录状态 ✅🟡⏹❌ 换 **CSS 圆点**（绿/黄/灰/红）+ 文字——Mac/Windows 不再因 emoji 字体渲染不同。`FileIndex.vue`
+- **目录行重建/删除按钮移到右上角**：按钮从「选中时行下方整行（撑高行）」改为名称行右侧（`ml-auto`），名称行固定高度 → 选中/未选中行高完全一致。`FileIndex.vue`
+- **索引结果默认按大小降序**：搜索排序默认从「按名称升序」改为「按大小降序」（大文件优先）。`FileIndex.vue`
+- **跨目录搜索/扩展名性能优化**：`search_all` 空查询按 size/name 排序时 `INDEXED BY` 强制覆盖索引（新增 `(size,root,rel)`/`(name_lower,root,rel)`），避免 SQLite 对 `root IN(子查询)` 逐 root 扫索引 + 全量外部排序；`exts-all` 强制 `(ext)` 索引分组。117 万行实测 size 排序 0.28s→6ms、exts-all 秒级→毫秒级。新库自动建索引，已存库（含复制来的索引）首次连接自动补建。`indexstore.py`
+
+### 修复
+- **检查更新误报新版本（任何版本都提示更新）**：安装布局下代码在 `$TRIM_APPDEST/server/`（无仓库的 `app/` 层），`_manifest_path()` 硬编码上溯两层越过包根、读不到 manifest，`read_current_version()` 回退 `"0.0.0"`，`is_newer` 恒为 True——改为**优先读 fnOS 注入的 `TRIM_APPVER`**（权威版本来源）+ **manifest 路径 walk-up 向上查找**（兼容仓库与安装两种布局）。`updatecheck.py`
+- **构建索引期间保存全局设置报 500**：构建落库（`save_index` 大事务）或快照压缩写库期间，WAL 单写者把「保存全局设置」等其他写挡在门外，`sqlite3` 默认 5s 超时后抛 `database is locked` → HTTP 500——`_connect` 统一加 `PRAGMA busy_timeout=30000`，轻量写等待锁释放（落库几秒内完成随后成功），不再报错。`indexstore.py`
+- **索引进度不实时（需切换任务才更新）**：`addTask` 创建任务对象后闭包直接改普通对象 `t` 不触发 Vue 响应式（存进 `tasks.value` 的是 reactive 副本），仅 `loadIndexes` 读回 proxy 才刷新——改为从 `tasks.value[buildId]` 读回 reactive proxy，SSE progress 事件实时驱动渲染（20 万文件实测 0%→100% 递增跳动）。`FileIndex.vue`
+- **首次进入索引列表空（需手动刷新才有）**：`listIndexes` 把加载失败吞成空数组、`loadIndexes` 无重试——应用启动/后端未就绪、构建落库刚完成等竞态下首次加载失败列表一直空；改为失败抛错 + 自动重试 3 次（间隔 1.2s），真正无索引时不重试。`api.js`、`FileIndex.vue`
+- **首次进入「全部索引」搜索区域空白**：进入文件索引页默认「全部索引」但未触发搜索，结果区只有「输入关键词开始搜索」提示、下方大片空白（切索引 `selectRow` 会自动搜索，唯独首次进入不搜）——`onMounted` 加载索引后若处于搜索页签自动 `search()` 一次，与切换索引行为一致，打开即有文件列表。`FileIndex.vue`
+- **复制索引（目录不存在）单索引搜索 400「目录不存在」**：`/api/index/search`、`snapshots/search`、`exts` 走 `_validate_dir` 校验磁盘目录存在性，复制来的索引（目录不在本机）被拒——搜索读 app 自有索引快照（建索引时已做目录/授权校验），改为 `has_index`（索引已建即可搜，仅要求 root 是已建索引）。`router.py`
+
+## [0.1.57] - 2026-08-20
+
+### 改进
+- **索引功能正式发布（去除 beta 标记）**：版本定为 0.1.57。此前 0.1.54–0.1.56 的索引能力一并进入本版本：构建队列（多任务排队单 worker 串行）、跨目录全局搜索（左栏开关化）、历史快照搜索/手动删除/无差别去重、构建实时进度、记录页签合并活跃任务、删除索引 VACUUM 回收空间、无索引空状态引导。`App.vue`、`manifest`
+- **文件索引左栏简化**：去掉「建立索引展开」面板（含构建中进度、排队列表），左栏常驻「选择目录 + 建立索引」；构建/排队状态与停止/取消操作移到记录页签。`FileIndex.vue`
+- **授权提示文案统一**：目录授权错误提示改为「请点击右侧「选择目录」授权目录后再使用输入框」（`_check_auth_scope`，查重/比较/索引三工具共用后端一处生效）。`router.py`
+- **报错形态对齐**：文件索引「建索引/重建」的目录校验错误改为左栏就地显示（同查重/比较表单 `cmpForm.error` 形态，换目录即清），其他动作错误（删除/快照删/设置存）保留顶部 toast。`FileIndex.vue`
+- **切换目录保持当前页签**：左栏切换索引/「全部索引」不再强制跳回「搜索」页签，保持当前页签并刷新对应数据（搜索/设置/记录）。`FileIndex.vue`
+- **构建进度只显示在记录**：左栏索引行去掉「已扫 N 个」实时计数（避免与记录页签重复展示），只留状态徽标（构建中/排队 #N/停止中），进度统一在记录页签展示。`FileIndex.vue`
+
+## [0.1.56] - 2026-08-20
+
+### 修复
+- **删除索引后 index.db 文件不缩小**：SQLite `DELETE` 只标记空闲页、文件不自动缩——`delete_index` 删完数据后执行 `VACUUM` 回收空间（best-effort），文件随删除缩小，不再越删越大。`indexstore.py`（`_vacuum_db`）
+- **大索引删除期间可重复删除**：删除确认后列表不刷新、按钮不禁用，50 万+ 索引删除较慢期间可能重复触发——确认后立即把该行标「删除中…」并禁用重建/删除按钮（`finally` 清态 + 刷新，失败可重试）。`FileIndex.vue`
+
+### 改进
+- **构建进度实时跳动**：左栏索引行用 SSE 活跃任务（`liveIdx`：实时 done/status/position）覆盖 API 快照，「已扫 N 个文件」逐文件实时更新；「建立索引」面板对排队 + 运行任务都自动展开（此前排队中的不展开，需切页/选中目录才看到）。`FileIndex.vue`
+- **记录页签显示构建中/排队中任务**：`index_builds` 只落已完成记录，运行中/排队中的任务合并到记录列表顶部（单索引按 root 过滤、全部索引带 root 徽标，SSE 实时）。`FileIndex.vue`
+- **无索引空状态引导**：左栏「全部索引」始终显示；右栏搜索/设置/记录空状态展示能力预览——搜索框（置灰示意）、设置卡片（自动刷新/策略/快照）、提示文案，让新用户看到「建了索引能干嘛」。`FileIndex.vue`
+
+## [0.1.55] - 2026-08-20
+
+### 新增
+- **历史快照搜索**：搜索页右上角「索引构建于 <time>（快照，非实时）」改为**构建时间下拉**（当前索引 + 各历史快照），选历史快照即**搜索该快照的文件清单**——解压 blob 内存过滤（q/ext/size/sort/page 全支持），可回溯任意一次构建时的文件状态。`indexstore.py`（`filter_entries`/`search_snapshot`）、`router.py`（`GET /api/index/snapshots/search`）、`api.js`、`FileIndex.vue`
+- **快照手动删除**：记录页签快照列表去掉「查看」按钮，改为 **✕ 删除**（复用查重删除任务叉叉样式，悬停显示），可手动释放指定历史快照空间。`router.py`（`DELETE /api/index/snapshots`）、`indexstore.py`（`delete_snapshot`）、`api.js`、`FileIndex.vue`
+
+### 改进
+- **无差别快照去重**：连续构建内容完全一致（rel+size+mtime_ns+ext 规范化签名）→ 不重复存 blob，最新快照**前滚**到本次构建（快照列表只留不同状态的最新代表，如每小时构建 8/9/10 点中 8=9 只留 9、10）；构建记录标记 `sameAsPrev`，前端显示中性徽标「同上次无差别」（悬停提示「内容与上次构建完全相同，未生成新快照」）。`indexstore.py`（`save_snapshot_if_enabled` 去重 + `_list_sig` + `index_builds.same_as_prev` 列迁移 `_has_col` 降级）、`indexbuild.py`、`FileIndex.vue`
+
+## [0.1.54] - 2026-08-20
+
+### 新增
+- **索引构建队列（v1.2）**：可创建多个索引任务，**单 worker 依次执行（FIFO）**——自动刷新（打开应用）与手动「建索引/重建」统一排队，一次执行一个、其余排队；同目录已有活跃任务（排队/运行/停止中）去重；**排队中任务可取消**（直接出队，不落构建记录，区别于运行中停止会留 `stopped` 记录）。单 worker 串行执行 → 落库天然无并发写（无需写锁）、内存峰值封顶 1×（消除此前自动刷新多目录并发跑的 SQLite 撞库风险与内存叠加）。`indexbuild.py`（队列 + 单 worker + 状态机 queued→running→done/stopped/error）、`router.py`（list 合并 queued 带 position、stop/delete 排队出队、refresh-auto 统一入队）、`FileIndex.vue`（任务队列列表 + 排队徽标）
+- **跨目录全局搜索（v1.3）**：左栏新增「全部索引」开关 → 右栏跨**全部已建索引**合并搜索——**全局分页/排序**、**per-root 计数**（photos 1,204 · docs 356…）、结果带目录列；ext 过滤走全索引扩展名并集。`indexstore.py`（`search_all`，复用共享 files 表）、`router.py`（`GET /api/index/search-all`）、`api.js`（`searchAllIndex`）、`FileIndex.vue`（全局搜索视图 + byRoot chips + 目录列）
+- **跨索引构建记录**：「全部索引」模式记录页签展示**全部索引的构建记录**（按时间倒序，每条带索引徽标）；单目录模式保持原记录 + 快照。`indexstore.py`（`list_all_build_records`）、`router.py`（`GET /api/index/history-all`）、`api.js`（`getAllBuildRecords`）、`FileIndex.vue`
+- **ext 输入自动补全（盘活 `idx_files_root_ext`）**：选中索引后 ext 输入框列出**该索引实际存在的扩展名**（`<datalist>` 原生补全，避免手打错大小写）；「全部索引」模式用全索引扩展名并集。`router.py`（`GET /api/index/exts`、`/api/index/exts-all`）、`indexstore.py`（`list_all_exts`）、`api.js`、`FileIndex.vue`
+
+### 改进
+- **文件索引页布局改为「左栏开关」**：去掉页标题（对齐无标题布局），左栏 = **建任务区**（建立索引 + 任务队列）+ **切换右栏的开关列表**（顶部「全部索引」+ 各目录）；右栏「搜索/设置/记录」按「全部 / 单独目录」**整体变换**。`FileIndex.vue`
+- **全局设置占位**：「全部索引」模式设置页签展示全局设置规划中占位（单目录逐项设置不变）。`FileIndex.vue`
+
+## [0.1.53] - 2026-08-19
+
+### 新增
+- **文件索引 v1.1 交互重构（方案A 左右分栏 + 三页签）**：「文件索引」页从纵向堆叠改为左右分栏——左栏索引列表（独立滚动、`⟳` 自动刷新徽标、选中行重建/删除），右栏当前索引的「搜索 / 设置 / 记录」三页签。搜索页签为原搜索面板（含「N 个读取错误」可展开琥珀条）；设置/记录页签为新增能力。`FileIndex.vue`（整区重构）
+- **索引设置（按目录）**：每个索引独立设置「打开应用自动刷新」开关 + 刷新策略（每次打开应用都重建 / 超过 N 小时未更新才重建，默认 24h）+ 索引快照保留份数（`snapshotKeep`，0=不保留，默认关）。打开应用（App.vue 挂载）自动触发已开启索引的后台重建（`POST /api/index/refresh-auto`，已有构建/未过期自动跳过，不阻塞页面）。`indexstore.py`（`index_settings` 表）、`router.py`（`settings`/`refresh-auto` 端点）、`App.vue`、`api.js`
+- **索引构建记录（最近 20 条）**：每次构建落一条记录，含触发方式（手动 / 打开应用自动刷新 / 定时[预留]）、构建耗时、完成时间、结果（成功 / 部分成功[有读取失败] / 已停止 / 失败）、文件数、失败列表与构建级错误详情（可展开）；**失败/停止也必落记录不丢**。`indexbuild.py`（`start(root, trigger)` + 三路径落库）、`indexstore.py`（`index_builds` 表 + 剪枝）、`router.py`（`history` 端点）、`FileIndex.vue`（记录页签）
+- **索引快照（可选，压缩 blob）**：每次成功构建的完整文件清单 zlib 压缩保留 N 份（按目录 `snapshotKeep` 配置，默认关），记录页签可查看历史某次构建的完整清单（只读）。`indexstore.py`（`index_snapshots` 表）、`router.py`（`snapshots`/`snapshots/view` 端点）、`FileIndex.vue`
+- **文件索引 E2E 覆盖扩展**：新增「设置页签开启自动刷新 → 左栏 ⟳ 徽标」「记录页签显示构建记录（手动触发 + 成功）」用例，既有 5 条文件索引用例全绿。`e2e.spec.js`
+
+### 改进
+- **打开应用自动刷新已开启索引**：App 启动时后台重建 `autoRefresh=true` 且满足策略的索引（不阻塞页面，进度在索引页可重连查看）。`App.vue`、`router.py`
+- **左栏索引行显示目录 basename + ⟳ 徽标**：`/vol1/1000/photos` 显示为 `photos`（悬停看全路径），开启自动刷新的索引带 `⟳` 角标，一目了然。`FileIndex.vue`
+- **文件索引页视觉对齐既有功能页**：两栏布局与三页签功能不变，但视觉皮肤改为应用统一风格——页面去 `max-w-[1100px]` 收窄改全宽（同 Settings）、左栏索引列表卡片化（选中态/徽标/按钮对齐 app 可选项与按钮样式）、顶部浏览器式页签改为 app 风格分段按钮、卡片圆角与字号密度统一（`rounded-xl`、`text-xs/sm`）。`FileIndex.vue`
+- **多目录比较「内容不一致」统一展示**：结果页不再区分「内容不一致（局部哈希）」与「完整内容哈希不一致」两个分类，合并为「内容不一致(N)」——完整模式下局部哈希不匹配的文件此前直接判异（局部哈希不同 ⇒ 内容必不同，跳过全文件哈希是性能优化、结论正确），但显示「局部哈希」字样容易让用户误以为未做完整校验。合并后对用户统一呈现「内容不一致」，内部判定方式（首尾采样 / 全文件）不再暴露。`CompareResult.vue`（新增 `contentMismatch` 合并 computed）
+- **多目录比较内容校验并行化**：共有文件的内容校验（局部哈希 / 全文件哈希）从单线程顺序循环改为线程池并行（`ThreadPoolExecutor`，默认 4 线程，与查重一致），大目录 / 大文件比对显著提速；结果仍按目录清单顺序稳定输出，进度 / 取消 / 跳过错误处理兼容。`compare.py`（新增 `workers` 参数）。+E2E 回归 21 例全绿
+- **首尾局部哈希块大小默认统一 1MB**：引擎层 `partial_hash` / `compare_dirs` / `scan_duplicates` 默认 `block_size` 从 64KB 统一为 1MB，与前端表单默认值（`1048576`）和后端兜底默认值一致（此前运行路径已是 1MB，仅引擎默认参数不一致）。副作用：≤1MB 的文件在「局部哈希」阶段即整文件哈希，中间段差异也能直接查出，小文件判定更精确。`hashing.py`、`compare.py`、`duplicate.py`
+- **单目录查重「完整」模式改为两阶段校验**：Phase1 按 size+首尾局部哈希预分组（只读首尾，排除必然不重复的文件），Phase2 对预分组内 ≥2 份的文件做全文件哈希细分（终判）——与多目录比较的完整模式语义对齐（预筛 + 全文件终判），并省掉「只出现一次」文件的全文件哈希（典型查重目录大多不重复，提速明显）。Phase2 逐文件进度事件节流（全重复目录数万 SSE 事件会占满前端主线程、终止反馈延迟），收敛到 100%。`duplicate.py`、`tests/test_duplicate.py`（+3 单测：两阶段与直接 full 分组严格等价 / Phase2 后统一 on_group / 字节进度收敛）
+
+### 修复
+- **「SHA256」字样与实际算法不符**：多目录比较引擎注释与结果页此前写「全文件 SHA256」，实际走 BLAKE3 优先、SHA-256 兜底——统一改为中性的「内容哈希」，避免误导（哈希算法属内部实现，对用户无感知）。`compare.py`、`CompareResult.vue`
+- **索引构建因单个文件时间戳超 SQLite 范围整体失败**：某文件 `created_ns`（ctypes statx 误读）超出 SQLite INTEGER（2^63-1）时 `save_index` 抛 `OverflowError: Python int too large to convert to SQLite INTEGER`，整次构建标失败且仅 3.5s toast 后消失。现在 `save_index` 落库前净化 ns（超界置 NULL，展示为 `-`），单文件异常不拖垮整包。`indexstore.py`（`_clean_ns`）
+- **索引构建失败日志字段误用**：错误日志用 `b.get("dir")`（build 字典无此键）致报错显示 `dir=None`——改为 `b["root"]`。`indexbuild.py`
+- **老库升级后索引列表接口报错**：v1 上机遗留库只有 `indexes`/`files` 两表，升级后读 `index_settings` 等新表抛 `no such table` 连带炸掉列表接口——4 个读函数 SELECT 包 `sqlite3.Error` 兜底按「无数据」返回（读不建表语义保持）。`indexstore.py`
+- **快照保存异常误把已成功构建标为失败**：`save_snapshot_if_enabled`（可选功能，大目录内存峰值可能抛错）与 `save_index` 同处一个 try，异常会把已落库可搜索的索引标成 `error`——快照调用单独 try/except，失败仅记 warning 不影响构建结果。`indexbuild.py`
+
 ## [0.1.52] - 2026-08-17
 
 ### 新增
